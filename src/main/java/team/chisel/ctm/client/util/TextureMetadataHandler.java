@@ -116,6 +116,12 @@ public enum TextureMetadataHandler {
         ModelBakery modelBakery = event.getModelBakery();
         for (Map.Entry<ResourceLocation, BakedModel> entry : event.getModels().entrySet()) {
             ResourceLocation rl = entry.getKey();
+            // FramedBlocks owns dynamic geometry and per-block/per-item camouflage data.
+            // CTM's automatic wrapper cannot preserve these inputs in its caches.
+            // Leave these models untouched instead of freezing or dropping their quads.
+            if ("framedblocks".equals(rl.getNamespace())) {
+                continue;
+            }
             UnbakedModel rootModel = modelBakery.getModel(rl);
             if (rootModel != null) {
             	BakedModel baked = entry.getValue();
