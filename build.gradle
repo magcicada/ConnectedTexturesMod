@@ -3,7 +3,7 @@ plugins {
     id 'eclipse'
     id 'idea'
     id 'org.ajoberstar.grgit.service' version '5.2.2'
-    id 'net.neoforged.gradle' version '[6.0.18,6.2)'
+    id 'net.minecraftforge.gradle' version '[6.0,6.2)'
     id 'io.freefair.lombok' version '8.6'
     id 'com.matthewprenger.cursegradle' version '1.4.0'
     id 'org.spongepowered.mixin' version '0.7.+'
@@ -11,7 +11,7 @@ plugins {
 
 tasks.named('wrapper', Wrapper).configure {
     //Define wrapper values here so as to not have to always do so when updating gradlew.properties
-    gradleVersion = '8.1.1'
+    gradleVersion = '8.8'
 }
 
 project.ext.gitHash = grgitService.service.get().grgit.log().find().abbreviatedId
@@ -27,6 +27,7 @@ project.base.archivesName = dev ? "CTM_DEV" : "CTM"
 java.toolchain.languageVersion = JavaLanguageVersion.of(17)
 
 mixin {
+    add sourceSets.main, 'ctm.refmap.json'
     config "ctm.mixins.json"
 }
 
@@ -102,6 +103,7 @@ compileJava.options.encoding = 'UTF-8'
 javadoc.options.encoding = 'UTF-8'
 
 jar {
+    finalizedBy 'reobfJar'
     manifest {
         attributes(['Specification-Title': 'ctm',
                     'Specification-Vendor': 'chisel-team',
@@ -126,9 +128,9 @@ repositories {
 }
 
 dependencies {
-    minecraft 'net.neoforged:forge:' + minecraft_version + '-' + forge_version
+    minecraft 'net.minecraftforge:forge:' + minecraft_version + '-' + forge_version
     testImplementation 'org.junit.jupiter:junit-jupiter:5.10.2'
-    annotationProcessor 'org.spongepowered:mixin:0.8.5-SNAPSHOT:processor'
+    annotationProcessor 'org.spongepowered:mixin:0.8.5:processor'
 }
 
 test {
