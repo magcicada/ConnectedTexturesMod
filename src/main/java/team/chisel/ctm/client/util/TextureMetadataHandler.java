@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.Map;
 import java.util.Set;
 
@@ -37,6 +38,9 @@ public enum TextureMetadataHandler {
 
 	private final Object2BooleanMap<ResourceLocation> wrappedModels = new Object2BooleanLinkedOpenHashMap<>();
     private final Multimap<ResourceLocation, Material> scrapedTextures = HashMultimap.create();
+
+    // Keep our models even if another mod wraps them before BakingCompleted.
+    private final Map<ModelCTM, ResourceLocation> pendingModels = new IdentityHashMap<>();
 
     public void textureScraped(ResourceLocation modelLocation, Material material) {
         scrapedTextures.put(modelLocation, material);
@@ -108,6 +112,7 @@ public enum TextureMetadataHandler {
     @SubscribeEvent(priority = EventPriority.LOWEST) // low priority to capture all event-registered models
     @SneakyThrows
     public void onModelBake(ModelEvent.ModifyBakingResult event) {
+        pendingModels.clear();
         ModelBakery modelBakery = event.getModelBakery();
         for (Map.Entry<ResourceLocation, BakedModel> entry : event.getModels().entrySet()) {
             ResourceLocation rl = entry.getKey();
@@ -161,7 +166,7 @@ public enum TextureMetadataHandler {
                 wrappedModels.put(rl, shouldWrap);
                 if (shouldWrap) {
                     try {
-                        entry.setValue(wrap(rootModel, baked));
+                        entry.setValue(wrap(rootModel, baked, rl));
                     } catch (IOException e) {
                         CTM.logger.error("Could not wrap model {}. Aborting...", rl, e);
                     }
@@ -170,29 +175,45 @@ public enum TextureMetadataHandler {
         }
     }
 
-    private @NotNull BakedModel wrap(UnbakedModel model, BakedModel object) throws IOException {
+    private @NotNull BakedModel wrap(UnbakedModel model, BakedModel object, ResourceLocation location) throws IOException {
         ModelCTM modelchisel = new ModelCTM(model);
+        pendingModels.put(modelchisel, location);
         return new ModelBakedCTM(modelchisel, object, null); 	
     }
 
     @SuppressWarnings({ "rawtypes", "unchecked" })
     @SubscribeEvent
     public void onModelBake(ModelEvent.BakingCompleted event) {
-        var cache = ObfuscationReflectionHelper.<Map, ModelBakery>getPrivateValue(ModelBakery.class, event.getModelBakery(), "f_119213_");
-        var cacheCopy = Map.copyOf(cache);
-        cache.clear();
+        Map<ModelCTM, ResourceLocation> modelsToInitialize = new IdentityHashMap<>(pendingModels);
+        // Preserve support for models created through the explicit CTM loader.
         for (var e : event.getModels().entrySet()) {
-            if (e.getValue() instanceof AbstractCTMBakedModel baked && 
-                    baked.getModel() instanceof ModelCTM ctmModel && 
-                    !ctmModel.isInitialized()) {
-                var baker = event.getModelBakery().new ModelBakerImpl((rl, m) -> m.sprite(), e.getKey());
-                ctmModel.bake(baker, Material::sprite, BlockModelRotation.X0_Y0, e.getKey());
-                //Note: We have to clear the cache after baking each model to ensure that we can initialize and capture any textures
-                // that might be done by parent models
-                cache.clear();
+            if (e.getValue() instanceof AbstractCTMBakedModel baked &&
+                    baked.getModel() instanceof ModelCTM ctmModel) {
+                modelsToInitialize.putIfAbsent(ctmModel, e.getKey());
             }
         }
-        cache.putAll(cacheCopy);
+
+        var cache = ObfuscationReflectionHelper.<Map, ModelBakery>getPrivateValue(ModelBakery.class, event.getModelBakery(), "f_119213_");
+        var cacheCopy = Map.copyOf(cache);
+        try {
+            cache.clear();
+            for (var e : modelsToInitialize.entrySet()) {
+                ModelCTM ctmModel = e.getKey();
+                if (!ctmModel.isInitialized()) {
+                    var baker = event.getModelBakery().new ModelBakerImpl((rl, m) -> m.sprite(), e.getValue());
+                    try {
+                        ctmModel.bake(baker, Material::sprite, BlockModelRotation.X0_Y0, e.getValue());
+                    } finally {
+                        // Each model must capture its own textures without a cached parent bake.
+                        cache.clear();
+                    }
+                }
+            }
+        } finally {
+            cache.clear();
+            cache.putAll(cacheCopy);
+            pendingModels.clear();
+        }
     }
 
     public void invalidateCaches() {
